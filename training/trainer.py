@@ -26,6 +26,7 @@ from models import CombinedModelDINO, LinearPrototypeBank, ModernViT, DINOHead
 from models.vision_transformer.modern_vit import Mlp, SwiGLUFFNFused
 from losses import DINOLoss, iBOTPatchLoss, KoLeoLoss, PatchPrototypeLoss
 from data import ProportionalMultiDatasetWrapper
+from diagnostics import get_or_create_probe_manifest, build_probe_loader, run_diagnostics
 from .helpers import (
     generate_block_masks,
     calculate_total_student_views,
@@ -145,6 +146,16 @@ def train_dinov2(args):
         persistent_workers=True,
         worker_init_fn=worker_init_fn
     )
+
+    # ============ Probe set for the patch-geometry diagnostics (rank 0 only) ============
+    probe_loader = None
+    if utils.is_main_process():
+        manifest_path = getattr(args, 'diag_probe_manifest', None) or os.path.join(args.output_dir, 'probe_manifest.json')
+        probe_manifest = get_or_create_probe_manifest(manifest_path, trainset, getattr(args, 'diag_probe_size', 1024))
+        probe_loader = build_probe_loader(
+            probe_manifest, 224, trainset.datasets[0].mean, trainset.datasets[0].std,
+            num_workers=min(4, args.num_workers),
+        )
 
     # ============ Initialize models ============
     # Layerscale schedule resolution. Defaults to 'uniform' with
@@ -598,6 +609,24 @@ def train_dinov2(args):
         if args.use_prototype_clustering and optimizer_prototypes is not None:
             for param_group in optimizer_prototypes.param_groups:
                 param_group["lr"] = proto_lr_schedule[current_iteration]
+
+        # ========== Patch-geometry diagnostics (rank 0; iteration 0 and every diag_every) ==========
+        if utils.is_main_process() and current_iteration % args.diag_every == 0:
+            lr_now = max(pg['lr'] for pg in optimizer_student.param_groups)
+            wd_now = max(pg['weight_decay'] for pg in optimizer_student.param_groups)
+            m_now = float(momentum_schedule[current_iteration])
+            print(f"[sched] it={current_iteration} lr={lr_now:.6g} wd={wd_now:.6g} m={m_now:.6g}", flush=True)
+            run_diagnostics(
+                current_iteration,
+                student.module.backbone,
+                teacher_without_ddp.backbone,
+                teacher_without_ddp.patchhead,
+                probe_loader,
+                device,
+                bool(args.use_fp16),
+                dino_class_loss.teacher_temp_schedule(current_iteration),
+                args.output_dir,
+            )
 
         optimizer_student.zero_grad()
         if args.use_prototype_clustering and optimizer_prototypes is not None:
