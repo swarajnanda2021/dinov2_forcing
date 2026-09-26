@@ -10,7 +10,7 @@ from pathlib import Path
 
 import submitit
 
-from configs import get_args_parser
+from configs import get_args_parser, apply_vit_variant
 from training import train_dinov2
 from training.helpers import calculate_total_student_views
 
@@ -127,7 +127,7 @@ def main():
     args.dist_url = get_init_file().as_uri()
 
     # ========== Default training configuration ==========
-    # Architecture - pick the variant. Each row of _VIT_CONFIGS fixes
+    # Architecture - pick the variant. Each row of configs.VIT_CONFIGS fixes
     # (embeddingdim, vitdepth, vitheads) to the standard DINOv2 sizes:
     #   S:  embed=384,  depth=12, heads=6    (tiny)
     #   B:  embed=768,  depth=12, heads=12   (base)
@@ -136,15 +136,7 @@ def main():
     #   G:  embed=1536, depth=40, heads=24   (giant)
     # patch_size is orthogonal to the variant.
     args.vit_variant = "B"
-    _VIT_CONFIGS = {
-        "S": dict(embeddingdim=384,  vitdepth=12, vitheads=6),
-        "B": dict(embeddingdim=768,  vitdepth=12, vitheads=12),
-        "L": dict(embeddingdim=1024, vitdepth=24, vitheads=16),
-        "H": dict(embeddingdim=1280, vitdepth=32, vitheads=16),
-        "G": dict(embeddingdim=1536, vitdepth=40, vitheads=24),
-    }
-    for k, v in _VIT_CONFIGS[args.vit_variant].items():
-        setattr(args, k, v)
+    apply_vit_variant(args)   # rows live in configs/config.py (VIT_CONFIGS)
     args.patch_size = 16
 
     # ---- Architecture corrections (see LayerScale/qk-norm investigation) ----

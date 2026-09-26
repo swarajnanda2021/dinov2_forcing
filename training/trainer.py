@@ -21,6 +21,7 @@ import torch.backends.cudnn as cudnn
 import torch.nn.functional as F
 
 import utils
+from configs import apply_vit_variant
 from models import CombinedModelDINO, LinearPrototypeBank, ModernViT, DINOHead
 from models.vision_transformer.modern_vit import Mlp, SwiGLUFFNFused
 from losses import DINOLoss, iBOTPatchLoss, KoLeoLoss, PatchPrototypeLoss
@@ -81,6 +82,7 @@ def train_dinov2(args):
     utils.init_distributed_mode(args)
     utils.fix_random_seeds(args.seed)
     print("git:\n  {}\n".format(utils.get_sha()))
+    apply_vit_variant(args)
 
     if getattr(args, 'qk_norm', None) is None:
         # Corrected DINOv2 default: qk_norm on at every model size when the
@@ -346,13 +348,30 @@ def train_dinov2(args):
         print(f"Created optimizer (student only)")
 
     # ============ Create schedulers ============
-    student_lr_schedule = utils.cosine_scheduler(
-        base_value=args.lr * math.sqrt(args.batch_size_per_gpu * utils.get_world_size() / 1024.0),
-        final_value=args.min_lr,
-        total_iters=args.total_iterations,
-        warmup_iters=args.warmup_iterations,
-        start_warmup_value=0
-    )
+    # Peak lr keeps the source rule: base lr x sqrt(global_batch / 1024).
+    peak_lr = args.lr * math.sqrt(args.batch_size_per_gpu * utils.get_world_size() / 1024.0)
+    lr_schedule_kind = getattr(args, 'lr_schedule', 'cosine')
+    wd_schedule_kind = getattr(args, 'wd_schedule', 'cosine')
+    momentum_schedule_kind = getattr(args, 'momentum_schedule', 'cosine')
+    momentum_teacher_end = getattr(args, 'momentum_teacher_end', 1.0)
+
+    if lr_schedule_kind == 'constant':
+        # linear warmup 0 -> peak over warmup_iterations, then hold the peak (min_lr ignored)
+        student_lr_schedule = utils.cosine_scheduler(
+            base_value=peak_lr,
+            final_value=peak_lr,
+            total_iters=args.total_iterations,
+            warmup_iters=args.warmup_iterations,
+            start_warmup_value=0
+        )
+    else:
+        student_lr_schedule = utils.cosine_scheduler(
+            base_value=peak_lr,
+            final_value=args.min_lr,
+            total_iters=args.total_iterations,
+            warmup_iters=args.warmup_iterations,
+            start_warmup_value=0
+        )
 
     proto_lr_schedule = None
     if args.use_prototype_clustering:
@@ -364,21 +383,50 @@ def train_dinov2(args):
             start_warmup_value=0
         )
 
-    wd_schedule = utils.cosine_scheduler(
-        base_value=args.weight_decay,
-        final_value=args.weight_decay_end,
-        total_iters=args.total_iterations,
-        warmup_iters=args.warmup_iterations,
-        start_warmup_value=args.weight_decay
-    )
+    if wd_schedule_kind == 'constant':
+        wd_schedule = utils.cosine_scheduler(
+            base_value=args.weight_decay,
+            final_value=args.weight_decay,
+            total_iters=args.total_iterations,
+            warmup_iters=0,
+            start_warmup_value=args.weight_decay
+        )
+    else:
+        wd_schedule = utils.cosine_scheduler(
+            base_value=args.weight_decay,
+            final_value=args.weight_decay_end,
+            total_iters=args.total_iterations,
+            warmup_iters=args.warmup_iterations,
+            start_warmup_value=args.weight_decay
+        )
 
-    momentum_schedule = utils.cosine_scheduler(
-        base_value=args.momentum_teacher,
-        final_value=1.0,
-        total_iters=args.total_iterations,
-        warmup_iters=0,
-        start_warmup_value=args.momentum_teacher
-    )
+    if momentum_schedule_kind == 'constant':
+        momentum_schedule = utils.cosine_scheduler(
+            base_value=args.momentum_teacher,
+            final_value=args.momentum_teacher,
+            total_iters=args.total_iterations,
+            warmup_iters=0,
+            start_warmup_value=args.momentum_teacher
+        )
+    else:
+        momentum_schedule = utils.cosine_scheduler(
+            base_value=args.momentum_teacher,
+            final_value=momentum_teacher_end,
+            total_iters=args.total_iterations,
+            warmup_iters=0,
+            start_warmup_value=args.momentum_teacher
+        )
+
+    if utils.is_main_process():
+        print(f"[sched-config] lr: {lr_schedule_kind} peak={peak_lr:.6g} "
+              f"min={(peak_lr if lr_schedule_kind == 'constant' else args.min_lr):.6g} "
+              f"warmup={args.warmup_iterations}")
+        print(f"[sched-config] wd: {wd_schedule_kind} peak={args.weight_decay:.6g} "
+              f"min={(args.weight_decay if wd_schedule_kind == 'constant' else args.weight_decay_end):.6g} "
+              f"warmup={(0 if wd_schedule_kind == 'constant' else args.warmup_iterations)}")
+        print(f"[sched-config] momentum: {momentum_schedule_kind} peak={args.momentum_teacher:.6g} "
+              f"min={(args.momentum_teacher if momentum_schedule_kind == 'constant' else momentum_teacher_end):.6g} "
+              f"warmup=0")
 
     # ============ Load checkpoint ============
     to_restore = {"iteration": 0, "dataset_position": 0}

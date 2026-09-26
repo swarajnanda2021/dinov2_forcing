@@ -5,6 +5,26 @@ Argument parser and configuration for DINOv2 training.
 import argparse
 import utils
 
+
+# Standard DINOv2 sizes: each row fixes (embeddingdim, vitdepth, vitheads).
+VIT_CONFIGS = {
+    "S": dict(embeddingdim=384,  vitdepth=12, vitheads=6),
+    "B": dict(embeddingdim=768,  vitdepth=12, vitheads=12),
+    "L": dict(embeddingdim=1024, vitdepth=24, vitheads=16),
+    "H": dict(embeddingdim=1280, vitdepth=32, vitheads=16),
+    "G": dict(embeddingdim=1536, vitdepth=40, vitheads=24),
+}
+
+
+def apply_vit_variant(args):
+    """If args.vit_variant is set, overwrite embeddingdim / vitdepth / vitheads from VIT_CONFIGS."""
+    variant = getattr(args, 'vit_variant', None)
+    if variant:
+        for k, v in VIT_CONFIGS[variant].items():
+            setattr(args, k, v)
+    return args
+
+
 def get_args_parser():
     """
     Create argument parser with all training configuration options.
@@ -23,6 +43,9 @@ def get_args_parser():
                         help='Number of attention heads')
     parser.add_argument('--vitdepth', default=12, type=int,
                         help='Number of transformer blocks')
+    parser.add_argument('--vit_variant', default=None, type=str, choices=list(VIT_CONFIGS),
+                        help='ViT size (S/B/L/H/G). When set, overrides --embeddingdim, '
+                             '--vitdepth and --vitheads with the standard DINOv2 values.')
     parser.add_argument('--out_dim', default=65536, type=int,
                         help='Output dimension of projection heads')
     parser.add_argument('--norm_last_layer', default=False, type=utils.bool_flag,
@@ -119,6 +142,18 @@ def get_args_parser():
                         help='Initial weight decay')
     parser.add_argument('--weight_decay_end', type=float, default=0.4,
                         help='Final weight decay')
+    # ---- schedule shapes (forcing study knobs) ----
+    parser.add_argument('--lr_schedule', default='cosine', choices=['cosine', 'constant'],
+                        help='cosine: linear warmup then cosine decay to --min_lr. constant: linear '
+                             'warmup then hold the peak; --min_lr is ignored.')
+    parser.add_argument('--wd_schedule', default='cosine', choices=['cosine', 'constant'],
+                        help='cosine: --weight_decay -> --weight_decay_end. constant: --weight_decay '
+                             'for the whole run; --weight_decay_end is ignored.')
+    parser.add_argument('--momentum_schedule', default='cosine', choices=['cosine', 'constant'],
+                        help='cosine: --momentum_teacher -> --momentum_teacher_end. constant: '
+                             '--momentum_teacher for the whole run; --momentum_teacher_end is ignored.')
+    parser.add_argument('--momentum_teacher_end', default=1.0, type=float,
+                        help='Final teacher EMA momentum (cosine momentum schedule only)')
     parser.add_argument('--lr_decay_rate', default=0.9, type=float,
                         help='Layer-wise LR decay rate (1.0 = no decay, 0.9 = typical)')
     parser.add_argument('--patch_embed_lr_mult', default=0.2, type=float,
@@ -144,6 +179,14 @@ def get_args_parser():
                         help='Checkpoint saving frequency')
     parser.add_argument('--seed', default=42, type=int,
                         help='Random seed')
+
+    # ========== Patch-geometry diagnostics ==========
+    parser.add_argument('--diag_every', default=2000, type=int,
+                        help='Run the patch-geometry diagnostics at iteration 0 and every this many iterations')
+    parser.add_argument('--diag_probe_manifest', default=None, type=str,
+                        help='JSON manifest of the fixed probe tiles (created on first use, then shared)')
+    parser.add_argument('--diag_probe_size', default=1024, type=int,
+                        help='Number of probe tiles drawn from the training stream when the manifest is created')
     parser.add_argument('--num_workers', default=10, type=int,
                         help='Number of data loading workers')
 
