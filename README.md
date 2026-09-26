@@ -94,13 +94,14 @@ script refuses to overwrite an existing experiment directory (it prints `exists:
 | R5 | R1 + `ibot_loss_weight 0.5` |
 | R6 | R1 + `n_standard_local_crops 16`, `local_crop_size 64` |
 | R7 | R1 + `mask_ratio_min 0.5`, `mask_ratio_max 0.75` |
-| R1_PROTO | R1 + `use_prototype_clustering True`, `num_prototypes 16384`, `clustering_weight 1.0` |
-| R0_PROTO | R0 + `use_prototype_clustering True`, `num_prototypes 16384`, `clustering_weight 1.0` |
+| R1_PROTO | R1 + `use_prototype_clustering True`, `num_prototypes 4096`, `clustering_weight 1.0` |
+| R0_PROTO | R0 + `use_prototype_clustering True`, `num_prototypes 4096`, `clustering_weight 1.0` |
 | SMOKE | R1 with `total_iterations 501`, `warmup_iterations 100`, `diag_every 100`, `save_checkpoint_freq 250`, `rolling_checkpoint_freq 250` |
 | SMOKE_PROTO | SMOKE + `use_prototype_clustering True` |
 
-`scripts/launch_all.sh` sets up R0 to R7 (eight GPUs, one each) and prints the eight launch
-commands; it submits them only with `AUTO_SUBMIT=yes`. The PROTO arms are a second wave.
+`scripts/launch_all.sh` sets up the first wave R0, R1, R2, R3, R4, R6, R1_PROTO, R0_PROTO (eight
+GPUs, one each) and prints the eight launch commands; it submits them only with
+`AUTO_SUBMIT=yes`. R5 and R7 stay defined in the suite for a later wave.
 
 ## Diagnostics
 

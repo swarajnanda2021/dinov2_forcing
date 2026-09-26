@@ -125,8 +125,8 @@ case "$RUN" in
   R5) r1_base; ensure_arg ibot_loss_weight 0.5 ;;
   R6) r1_base; ensure_arg n_standard_local_crops 16; ensure_arg local_crop_size 64 ;;
   R7) r1_base; ensure_arg mask_ratio_min 0.5; ensure_arg mask_ratio_max 0.75 ;;
-  R1_PROTO) r1_base; ensure_arg use_prototype_clustering True; ensure_arg num_prototypes 16384; ensure_arg clustering_weight 1.0 ;;
-  R0_PROTO)          ensure_arg use_prototype_clustering True; ensure_arg num_prototypes 16384; ensure_arg clustering_weight 1.0 ;;
+  R1_PROTO) r1_base; ensure_arg use_prototype_clustering True; ensure_arg num_prototypes 4096; ensure_arg clustering_weight 1.0 ;;
+  R0_PROTO)          ensure_arg use_prototype_clustering True; ensure_arg num_prototypes 4096; ensure_arg clustering_weight 1.0 ;;
   SMOKE)       r1_base; ensure_arg total_iterations 501; ensure_arg warmup_iterations 100; ensure_arg diag_every 100
                ensure_arg save_checkpoint_freq 250; ensure_arg rolling_checkpoint_freq 250 ;;
   SMOKE_PROTO) r1_base; ensure_arg total_iterations 501; ensure_arg warmup_iterations 100; ensure_arg diag_every 100

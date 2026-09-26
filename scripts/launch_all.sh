@@ -1,12 +1,12 @@
 #!/bin/bash
-# scripts/launch_all.sh -- set up the first-wave arms (R0..R7, one GPU each) and print (or, with
-# AUTO_SUBMIT=yes, run) the eight launch commands. The PROTO arms are a second wave and are not
-# included here; run scripts/run_forcing_suite.sh R1_PROTO / R0_PROTO by hand.
+# scripts/launch_all.sh -- set up the first-wave arms (one GPU each) and print (or, with
+# AUTO_SUBMIT=yes, run) the eight launch commands. R5 and R7 stay defined in the suite for a
+# later wave; run scripts/run_forcing_suite.sh R5 / R7 by hand.
 set -e
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AUTO_SUBMIT="${AUTO_SUBMIT:-no}"
-FIRST_WAVE="R0 R1 R2 R3 R4 R5 R6 R7"
+FIRST_WAVE="R0 R1 R2 R3 R4 R6 R1_PROTO R0_PROTO"
 
 CMDS=()
 for arm in $FIRST_WAVE; do
