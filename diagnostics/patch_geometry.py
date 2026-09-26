@@ -4,7 +4,9 @@ Patch-token geometry against the class token, measured on a fixed probe set.
 Runs on rank 0 only, under torch.no_grad() and the training autocast dtype, on the student
 and the teacher backbone in eval mode. The tokens are the post-norm outputs (backbone.norm)
 that the losses consume in training: 'clstoken' feeds the DINO head and 'patchtokens' feed
-the iBOT head (single-image keys: clstoken_postnorm / patchtokens_postnorm).
+the iBOT head (single-image keys: clstoken_postnorm / patchtokens_postnorm). The pnorm_* outlier
+guard alone reads the pre-norm residual stream (patchtokens_prenorm): after backbone.norm every
+token has norm close to sqrt(d), so high-norm outlier tokens are only visible before it.
 
 Sinkhorn-Knopp here is the training routine's arithmetic (losses/ibot_loss.py) without the
 distributed all-reduces, because the diagnostics run on one rank over the probe set.
@@ -216,6 +218,7 @@ def probe_backbone(backbone, patchhead, loader, device, amp_enabled, teacher_tem
                 out = backbone(x, token_masks=None, return_dict=True)
                 X_raw = out['patchtokens_postnorm']
                 c_raw = out['clstoken_postnorm']
+                X_pre = out['patchtokens_prenorm']
                 attn = _last_block_attention(backbone.blocks[-1], captured['x'])
                 # iBOT head on a fixed random subset of tokens per tile
                 Bc, P, _ = X_raw.shape
@@ -238,7 +241,7 @@ def probe_backbone(backbone, patchhead, loader, device, amp_enabled, teacher_tem
                 loc_sets = locality_index_sets(g, g)
                 loc_sets = tuple(t.to(device) for t in loc_sets)
             loc_sum += locality(Xn, *loc_sets) * B
-            norms_all.append(X.norm(dim=-1).reshape(-1))
+            norms_all.append(X_pre.float().norm(dim=-1).reshape(-1))
             rm, pm, cm, cnt, row_max = attention_routing(attn, num_reg)
             reg_m += rm; patch_m += pm; cls_m += cm; route_count += cnt
             row_max_all.append(row_max.float())
