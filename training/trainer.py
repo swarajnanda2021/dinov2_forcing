@@ -770,16 +770,21 @@ def train_dinov2(args):
         )
 
         # ========== Backward and optimizer steps ==========
+        # The student backward runs BEFORE the prototype-bank step: the student's clustering
+        # term holds the bank weights in its graph, and an in-place optimizer step on them
+        # first makes autograd reject the backward (saved-tensor version mismatch). The bank
+        # only learns from prototype_loss; the student's gradient into it is zeroed below
+        # by optimizer_prototypes.zero_grad() before prototype_loss.backward(), as before.
         if fp16_scaler is None:
+            optimizer_student.zero_grad()
+            student_loss.backward()
+            student.sync_grads()                     # hand-rolled DP: reduce BEFORE clip/step
+
             if args.use_prototype_clustering and optimizer_prototypes is not None:
                 optimizer_prototypes.zero_grad()
                 prototype_loss.backward()
                 prototype_bank.sync_grads()          # hand-rolled DP: reduce bank grads
                 optimizer_prototypes.step()
-
-            optimizer_student.zero_grad()
-            student_loss.backward()
-            student.sync_grads()                     # hand-rolled DP: reduce BEFORE clip/step
 
             if args.clip_grad:
                 utils.clip_gradients(student, args.clip_grad)
@@ -789,16 +794,16 @@ def train_dinov2(args):
             optimizer_student.step()
 
         else:
+            optimizer_student.zero_grad()
+            fp16_scaler.scale(student_loss).backward()
+            fp16_scaler.unscale_(optimizer_student)
+            student.sync_grads()                     # reduce unscaled grads BEFORE clip/step
+
             if args.use_prototype_clustering and optimizer_prototypes is not None:
                 optimizer_prototypes.zero_grad()
                 prototype_loss.backward()
                 prototype_bank.sync_grads()          # hand-rolled DP: reduce bank grads
                 optimizer_prototypes.step()
-
-            optimizer_student.zero_grad()
-            fp16_scaler.scale(student_loss).backward()
-            fp16_scaler.unscale_(optimizer_student)
-            student.sync_grads()                     # reduce unscaled grads BEFORE clip/step
 
             if args.clip_grad:
                 utils.clip_gradients(student, args.clip_grad)
