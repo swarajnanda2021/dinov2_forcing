@@ -17,7 +17,7 @@ Gradient sync is DDP-EQUIVALENT (verified bit-equal on A100, 66/66 params, maxab
     grad=None, NOT a zero tensor. This is the subtle correctness point: AdamW skips
     a None grad, but a *zero* grad still applies decoupled weight decay
     (p *= 1 - lr*wd) and still moves p via existing Adam moments -- so a
-    conditionally-unused head (patchhead, semantic/prototype heads) would silently
+    conditionally-unused head (patchhead, prototype head) would silently
     decay. DDP + find_unused_parameters leaves such grads None; we replicate that.
 
 Params are broadcast from rank 0 at construction (like DDP) so every rank starts

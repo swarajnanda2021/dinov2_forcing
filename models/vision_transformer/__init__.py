@@ -1,20 +1,11 @@
 """
 Vision Transformer implementations.
-Includes both modern xformers-based ViT and auxiliary models.
+Modern xformers-based ViT plus the DINO projection head.
 """
 
-from .modern_vit import VisionTransformer
-from .auxiliary_models import (
-    DINOHead,
-    ADIOSMaskModel,
-    MaskModel,
-    CellViT,
-)
+from .modern_vit import VisionTransformer, DINOHead
 
 __all__ = [
     'VisionTransformer',
     'DINOHead',
-    'ADIOSMaskModel',
-    'MaskModel',
-    'CellViT',
 ]

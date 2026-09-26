@@ -706,24 +706,10 @@ class DINOHead(nn.Module):
             if isinstance(m, nn.Linear) and m.bias is not None:
                 nn.init.constant_(m.bias, 0)
 
-    def forward_bottleneck(self, x):
-        """Bottleneck ONLY: mlp + L2-normalize, skipping the out_dim prototype layer.
-        Byte-for-byte the same tensor forward(..., return_bottleneck=True) puts in `bottleneck`
-        (the bottleneck is taken before last_layer and never depends on it). Used by the thinned
-        scout, which consumes only the bottleneck and would otherwise pay for the full projection."""
+    def forward(self, x):
         x = self.mlp(x)
         # Clustering layers inspired by SwAV
         x = nn.functional.normalize(x, dim=-1, p=2)
-        return x
-
-    def forward(self, x, return_bottleneck=False):
-        x = self.mlp(x)
-        # Clustering layers inspired by SwAV
-        x = nn.functional.normalize(x, dim=-1, p=2)
-        if return_bottleneck:
-            bottleneck = x
         x = self.last_layer(x)
-        if return_bottleneck:
-            return x, bottleneck
         return x
 

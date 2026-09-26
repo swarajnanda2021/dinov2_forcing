@@ -62,10 +62,7 @@ class PatchPrototypeLoss(nn.Module):
         """Teacher path ONLY: Sinkhorn assignments Q + arrangement loss (+ optional koleo).
 
         Depends solely on the teacher tokens and the bank, NOT on the student view or
-        mask -- so it is computed ONCE per distinct teacher input and reused. The
-        semantic-prototype call feeds the same teacher_patch_tokens_g1, so reusing g1's
-        Q here is bit-identical to recomputing it, and avoids a full bank matmul + a
-        Sinkhorn (4 collectives).
+        mask -- so it is computed ONCE per distinct teacher input and reused.
 
         Returns: (Q_tilde_all [B,N,K], teacher_proto_loss, koleo_proto_loss_or_None)
         """
@@ -87,8 +84,7 @@ class PatchPrototypeLoss(nn.Module):
                            prototype_bank, current_iteration, masks_weight=None):
         """Student prediction loss given PRECOMPUTED teacher targets Q_tilde_all [B,N,K].
 
-        This is the only part that differs between the block-mask and semantic calls
-        (different student view + mask), so only this is recomputed for semantic."""
+        This is the only part that depends on the student view and mask."""
         B, N, D = student_patch_tokens.shape
         student_norm = F.normalize(student_patch_tokens, p=2, dim=-1)
 
@@ -128,7 +124,7 @@ class PatchPrototypeLoss(nn.Module):
                 prototype_bank, current_iteration, teacher_temp, masks_weight=None):
         """Full path (teacher targets + student prediction). Numerically unchanged vs
         the pre-refactor loss; additionally returns Q_tilde_all so callers with the same
-        teacher input (semantic prototype) can reuse it instead of recomputing.
+        teacher input can reuse it instead of recomputing.
 
         Returns: (clustering_loss, teacher_proto_loss, koleo_proto_loss, Q_tilde_all)
         """

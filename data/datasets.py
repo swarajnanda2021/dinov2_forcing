@@ -61,11 +61,7 @@ class MemoryEfficientShardedPathologyDataset(IterableDataset):
         mean: tuple = (0.6816, 0.5640, 0.7232),
         std: tuple = (0.1617, 0.1714, 0.1389),
         corruptions_dir: str = "corruption_results",
-        use_pathology_recipe: bool = False,
-        ect_probability: float = 0.4,
         zip_interleave: int = 16,
-        emit_scout: bool = False,
-        scout_pool_mode: bool = False,
     ):
         super().__init__()
         self.base_dir = base_dir
@@ -86,8 +82,6 @@ class MemoryEfficientShardedPathologyDataset(IterableDataset):
         self.global_crop_scale = global_crop_scale
         self.mean = mean
         self.std = std
-        self.use_pathology_recipe = use_pathology_recipe
-        self.ect_probability = ect_probability
 
         # Initialize transforms
         self.transforms = TMEDinoTransforms(
@@ -98,10 +92,6 @@ class MemoryEfficientShardedPathologyDataset(IterableDataset):
             n_local_crops=n_local_crops,
             mean=mean,
             std=std,
-            use_pathology_recipe=use_pathology_recipe,
-            ect_probability=ect_probability,
-            emit_scout=emit_scout,
-            scout_pool_mode=scout_pool_mode,
         )
 
         # Setup corruption logging
@@ -423,8 +413,6 @@ class DINOv2PathologyDataset(torch.utils.data.IterableDataset):
         global_size: int = 224,
         mean: tuple = (0.6816, 0.5640, 0.7232),
         std: tuple = (0.1617, 0.1714, 0.1389),
-        use_pathology_recipe: bool = False,
-        ect_probability: float = 0.4,
     ):
         self.n_standard_local_crops = n_standard_local_crops
         self.global_views = global_views
@@ -445,8 +433,6 @@ class DINOv2PathologyDataset(torch.utils.data.IterableDataset):
             n_local_crops=n_standard_local_crops,
             mean=mean,
             std=std,
-            use_pathology_recipe=use_pathology_recipe,
-            ect_probability=ect_probability,
         )
     
     def __iter__(self):
@@ -505,10 +491,6 @@ class ProportionalMultiDatasetWrapper(IterableDataset):
         global_size: int = 224,
         mean: tuple = (0.6816, 0.5640, 0.7232),
         std: tuple = (0.1617, 0.1714, 0.1389),
-        use_pathology_recipe: bool = False,
-        ect_probability: float = 0.4,
-        emit_scout: bool = False,
-        scout_pool_mode: bool = False,
     ):
         super().__init__()
 
@@ -547,10 +529,6 @@ class ProportionalMultiDatasetWrapper(IterableDataset):
                 n_local_crops=n_standard_local_crops,  # Map parameter name
                 mean=mean,
                 std=std,
-                use_pathology_recipe=use_pathology_recipe,
-                ect_probability=ect_probability,
-                emit_scout=emit_scout,
-                scout_pool_mode=scout_pool_mode,
             )
 
             self.datasets.append(dataset)
