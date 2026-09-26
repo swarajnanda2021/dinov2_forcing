@@ -12,6 +12,7 @@ set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK="${1:-${TMPDIR:-/tmp}/dinov2_forcing_dryrun}"
 PY="${PYTHON:-python}"
+ARMS="${DRYRUN_ARMS:-R0 R1 R1_PROTO}"    # e.g. DRYRUN_ARMS="R1 R1_PROTO"
 N_IMAGES=64
 TILE=224
 # bf16 autocast on CPU is ~20x slower than fp32 for the backward pass (measured on an M1: 57 s vs
@@ -77,12 +78,19 @@ expect () {  # expect <n> <pattern> <file> <label>
     echo "  ok: $4 ($got)"
 }
 
-run_arm R0 "${R0[@]}"
-run_arm R1 "${R1[@]}"
-run_arm R1_PROTO "${R1_PROTO[@]}"
+FIRST_ARM=""
+for a in $ARMS; do
+    [ -z "$FIRST_ARM" ] && FIRST_ARM="$a"
+    case "$a" in
+      R0) run_arm R0 "${R0[@]}" ;;
+      R1) run_arm R1 "${R1[@]}" ;;
+      R1_PROTO) run_arm R1_PROTO "${R1_PROTO[@]}" ;;
+      *) echo "unknown arm $a"; exit 1 ;;
+    esac
+done
 
 echo; echo "== checks =="
-for a in R0 R1 R1_PROTO; do
+for a in $ARMS; do
     L="$WORK/runs/$a/train.log"
     expect 3 '^\[sched-config\]' "$L" "$a sched-config lines"
     expect 4 '^\[sched\]' "$L" "$a sched lines (it 0,2,4,6)"
@@ -93,17 +101,24 @@ for a in R0 R1 R1_PROTO; do
     test -f "$WORK/runs/$a/checkpoint_iter_00000006.pth" || { echo "missing iteration-6 checkpoint for $a"; exit 1; }
 done
 # constant schedules on R1: lr after warmup == peak (2e-4 * sqrt(4/1024)), wd 0.4, m 0.992 at every [sched]
-expect 3 '^\[sched\] it=[246] lr=1.25e-05 wd=0.4 m=0.992' "$WORK/runs/R1/train.log" "R1 constant lr/wd/m after warmup"
-expect 1 '^\[sched-config\] lr: constant peak=1.25e-05 min=1.25e-05 warmup=2' "$WORK/runs/R1/train.log" "R1 lr sched-config"
-expect 1 '^\[sched-config\] lr: cosine peak=1.25e-05 min=1e-06 warmup=2' "$WORK/runs/R0/train.log" "R0 lr sched-config"
-expect 1 '^\[sched-config\] wd: cosine peak=0.04 min=0.4' "$WORK/runs/R0/train.log" "R0 wd sched-config"
-expect 1 'clustering_entropy' "$WORK/runs/R1_PROTO/train.log" "R1_PROTO clustering_entropy logged"
-if grep -q -i 'nan' <(grep '^It ' "$WORK/runs/R1_PROTO/train.log"); then echo "NaN in R1_PROTO loss line"; exit 1; fi
-echo "  ok: no NaN in R1_PROTO loss lines"
-expect 1 'wrote manifest' "$WORK/runs/R0/train.log" "manifest written once (R0)"
-expect 1 'loaded manifest' "$WORK/runs/R1/train.log" "manifest reused (R1)"
-expect 1 'loaded manifest' "$WORK/runs/R1_PROTO/train.log" "manifest reused (R1_PROTO)"
+has_arm () { case " $ARMS " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+if has_arm R1; then
+    expect 3 '^\[sched\] it=[246] lr=1.25e-05 wd=0.4 m=0.992' "$WORK/runs/R1/train.log" "R1 constant lr/wd/m after warmup"
+    expect 1 '^\[sched-config\] lr: constant peak=1.25e-05 min=1.25e-05 warmup=2' "$WORK/runs/R1/train.log" "R1 lr sched-config"
+fi
+if has_arm R0; then
+    expect 1 '^\[sched-config\] lr: cosine peak=1.25e-05 min=1e-06 warmup=2' "$WORK/runs/R0/train.log" "R0 lr sched-config"
+    expect 1 '^\[sched-config\] wd: cosine peak=0.04 min=0.4' "$WORK/runs/R0/train.log" "R0 wd sched-config"
+fi
+if has_arm R1_PROTO; then
+    expect 1 'clustering_entropy' "$WORK/runs/R1_PROTO/train.log" "R1_PROTO clustering_entropy logged"
+    if grep -q -i 'nan' <(grep '^It ' "$WORK/runs/R1_PROTO/train.log"); then echo "NaN in R1_PROTO loss line"; exit 1; fi
+    echo "  ok: no NaN in R1_PROTO loss lines"
+fi
+expect 1 'wrote manifest' "$WORK/runs/$FIRST_ARM/train.log" "manifest written once ($FIRST_ARM)"
+for a in $ARMS; do [ "$a" = "$FIRST_ARM" ] || expect 1 'loaded manifest' "$WORK/runs/$a/train.log" "manifest reused ($a)"; done
 
+if ! has_arm R1; then echo; echo "DRY RUN PASSED  (work dir: $WORK; no R1 arm, resume test skipped)"; exit 0; fi
 echo; echo "== kill-and-resume: R1 from the iteration-3 checkpoint =="
 OUT="$WORK/runs/R1"
 cp "$OUT/train.log" "$OUT/train_first.log"

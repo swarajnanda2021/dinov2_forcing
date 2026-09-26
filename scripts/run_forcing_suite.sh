@@ -84,7 +84,7 @@ ensure_arg weight_decay             0.04
 ensure_arg weight_decay_end         0.4
 ensure_arg min_lr                   1e-6
 ensure_arg lr                       2e-4        # base at global batch 1024; the trainer scales by sqrt(256/1024) -> 1e-4 on one GPU
-ensure_arg drop_path_rate           0.4         # DROP_PATH_S = configs/config.py default
+ensure_arg drop_path_rate           0.1         # source recipe launcher value (with drop_path_uniform=True)
 ensure_arg n_standard_local_crops   8
 ensure_arg local_crop_size          96
 ensure_arg ibot_loss_weight         1.0

@@ -29,6 +29,7 @@ DIAG_KEYS = [
 
 # iBOT target entropy is measured on a fixed random subset of tokens per tile (seed 0): the
 # full probe set (1024 tiles x 196 tokens x out_dim 65536 in fp32) would need >50 GB.
+# The count comes from --diag_ibot_tokens (trainer default: 49 on CUDA, 16 on CPU).
 IBOT_TOKENS_PER_TILE = 16
 LOCALITY_FAR_SAMPLES = 8
 LOCALITY_FAR_MIN_DIST = 4   # Chebyshev grid distance
@@ -281,13 +282,14 @@ def format_diag_line(it, branch, metrics):
 
 
 def run_diagnostics(it, student_backbone, teacher_backbone, teacher_patchhead, probe_loader,
-                    device, amp_enabled, teacher_temp, output_dir):
+                    device, amp_enabled, teacher_temp, output_dir, tokens_per_tile=IBOT_TOKENS_PER_TILE):
     """Print one [diag] line per branch and append one JSON record per branch to diag.jsonl.
     The teacher iBOT head is used for both branches (the training targets come from it)."""
     t0 = time.time()
     records = []
     for branch, backbone in (('student', student_backbone), ('teacher', teacher_backbone)):
-        m = probe_backbone(backbone, teacher_patchhead, probe_loader, device, amp_enabled, teacher_temp)
+        m = probe_backbone(backbone, teacher_patchhead, probe_loader, device, amp_enabled, teacher_temp,
+                           tokens_per_tile=tokens_per_tile)
         print(format_diag_line(it, branch, m), flush=True)
         rec = {'it': int(it), 'branch': branch}
         rec.update({k: float(m[k]) for k in DIAG_KEYS})

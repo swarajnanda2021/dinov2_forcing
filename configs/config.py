@@ -187,6 +187,9 @@ def get_args_parser():
                         help='JSON manifest of the fixed probe tiles (created on first use, then shared)')
     parser.add_argument('--diag_probe_size', default=1024, type=int,
                         help='Number of probe tiles drawn from the training stream when the manifest is created')
+    parser.add_argument('--diag_ibot_tokens', default=None, type=int,
+                        help='Patch tokens per probe tile fed to the iBOT head for ibot_tok_H / ibot_img_H '
+                             '(fixed random subset, seed 0). Default: 49 on CUDA, 16 on CPU.')
     parser.add_argument('--num_workers', default=10, type=int,
                         help='Number of data loading workers')
 

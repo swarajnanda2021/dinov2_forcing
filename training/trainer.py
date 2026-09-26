@@ -149,6 +149,9 @@ def train_dinov2(args):
 
     # ============ Probe set for the patch-geometry diagnostics (rank 0 only) ============
     probe_loader = None
+    diag_ibot_tokens = getattr(args, 'diag_ibot_tokens', None)
+    if diag_ibot_tokens is None:
+        diag_ibot_tokens = 49 if torch.cuda.is_available() else 16
     if utils.is_main_process():
         manifest_path = getattr(args, 'diag_probe_manifest', None) or os.path.join(args.output_dir, 'probe_manifest.json')
         probe_manifest = get_or_create_probe_manifest(manifest_path, trainset, getattr(args, 'diag_probe_size', 1024))
@@ -386,9 +389,10 @@ def train_dinov2(args):
 
     proto_lr_schedule = None
     if args.use_prototype_clustering:
+        # follows lr_schedule_kind: constant = warmup to args.lr*0.5 then flat; cosine = unchanged
         proto_lr_schedule = utils.cosine_scheduler(
             base_value=args.lr * 0.5,
-            final_value=0,
+            final_value=(args.lr * 0.5 if lr_schedule_kind == 'constant' else 0),
             total_iters=args.total_iterations,
             warmup_iters=args.warmup_iterations,
             start_warmup_value=0
@@ -626,6 +630,7 @@ def train_dinov2(args):
                 bool(args.use_fp16),
                 dino_class_loss.teacher_temp_schedule(current_iteration),
                 args.output_dir,
+                tokens_per_tile=diag_ibot_tokens,
             )
 
         optimizer_student.zero_grad()

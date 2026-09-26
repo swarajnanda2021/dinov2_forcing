@@ -50,6 +50,7 @@ New arguments:
 | `--diag_every` | 2000 | diagnostics at iteration 0 and every this many iterations |
 | `--diag_probe_manifest` | none | JSON manifest of the shared probe tiles (created on first use) |
 | `--diag_probe_size` | 1024 | number of probe tiles drawn when the manifest is created |
+| `--diag_ibot_tokens` | 49 on CUDA, 16 on CPU | patch tokens per probe tile fed to the iBOT head for the entropy metrics |
 
 The schedules are built in `training/trainer.py` next to the source's `cosine_scheduler`
 calls. At startup the resolved schedules are printed, one line each:
@@ -74,7 +75,7 @@ Common settings for every arm (`scripts/run_forcing_suite.sh`): `vit_variant "S"
 `batch_size_per_gpu 256`, `num_workers 10`, `total_iterations 200_001`,
 `warmup_iterations 10_000`, `save_checkpoint_freq 10_000`, `momentum_teacher 0.992`,
 `weight_decay 0.04`, `weight_decay_end 0.4`, `min_lr 1e-6`, `lr 2e-4` (1e-4 applied at one
-GPU x 256), `drop_path_rate 0.4` (the `configs/config.py` default), `n_standard_local_crops 8`,
+GPU x 256), `drop_path_rate 0.1` (the source recipe launcher value, with `drop_path_uniform True`), `n_standard_local_crops 8`,
 `local_crop_size 96`, `ibot_loss_weight 1.0`, `mask_ratio_min 0.1`, `mask_ratio_max 0.5`,
 `mask_sample_probability 0.5`, `koleo_loss_weight 0.1`, `use_prototype_clustering False`,
 `diag_every 2000`, `diag_probe_manifest "$BASE_DIR/probe_manifest.json"`, `seed 0`.
@@ -137,8 +138,8 @@ singular values (there was no effective-rank function in `utils.py`).
 Two implementation notes. The training attention is a fused kernel, so the last block's
 attention is recomputed explicitly from its q and k for the probe batch only (a forward
 pre-hook captures the block input; the training forward is not touched). The iBOT target
-entropy uses the teacher iBOT head for both branches and a fixed random subset of 16 tokens
-per tile (seed 0), because the full probe set at out_dim 65536 in fp32 would need over 50 GB;
+entropy uses the teacher iBOT head for both branches and a fixed random subset of
+`--diag_ibot_tokens` tokens per tile (seed 0), because the full probe set at out_dim 65536 in fp32 would need over 50 GB;
 the Sinkhorn is the training routine's arithmetic without its distributed all-reduces, since
 the diagnostics run on one rank.
 
