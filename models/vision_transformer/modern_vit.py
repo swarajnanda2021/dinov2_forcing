@@ -12,10 +12,48 @@ import torch.nn as nn
 import torch.nn.functional as F
 from timm.layers import PatchDropout, trunc_normal_
 
-import xformers.ops as xops
-from xformers.ops import fmha
+try:
+    import xformers.ops as xops
+    from xformers.ops import fmha
+except ImportError:  # CPU / no-xformers fallback (local dry run only; CUDA path unchanged)
+    xops = None
+    fmha = None
 
 from timm.models._manipulate import checkpoint_seq
+
+
+class _BlockDiagonalMaskFallback:
+    """Minimal stand-in for xformers' BlockDiagonalMask when xformers is not importable.
+    Holds the per-sequence lengths, materializes an additive float mask for SDPA, and
+    splits the packed tensor back into the original crops. Only used when xops is None."""
+    def __init__(self, seqlens):
+        self.seqlens = list(seqlens)
+        self._batch_sizes = None
+        self._dense = None
+
+    @classmethod
+    def from_seqlens(cls, seqlens):
+        return cls(seqlens)
+
+    def materialize(self, device, dtype):
+        if self._dense is None or self._dense.device != device or self._dense.dtype != dtype:
+            n = sum(self.seqlens)
+            seg = torch.repeat_interleave(torch.arange(len(self.seqlens), device=device),
+                                          torch.tensor(self.seqlens, device=device))
+            allowed = seg[:, None] == seg[None, :]
+            m = torch.zeros(n, n, device=device, dtype=dtype)
+            m.masked_fill_(~allowed, float('-inf'))
+            self._dense = m
+        return self._dense
+
+    def split(self, x_cat):
+        # x_cat: [1, total_tokens, D] -> list of [B_i, N_i, D] in the packed order
+        outs = []
+        offset = 0
+        for b, n in zip(self._batch_sizes, self._seqlen_per_crop):
+            outs.append(x_cat[:, offset:offset + b * n].reshape(b, n, x_cat.shape[-1]))
+            offset += b * n
+        return outs
 
 # Cache for attention bias to avoid recomputation
 attn_bias_cache = {}
@@ -66,7 +104,11 @@ def get_attn_bias_and_cat(x_list, branges=None):
             for _ in range(b):
                 seqlens.append(x.shape[1])
         
-        attn_bias = fmha.BlockDiagonalMask.from_seqlens(seqlens)
+        if fmha is not None:
+            attn_bias = fmha.BlockDiagonalMask.from_seqlens(seqlens)
+        else:
+            attn_bias = _BlockDiagonalMaskFallback.from_seqlens(seqlens)
+            attn_bias._seqlen_per_crop = [x.shape[1] for x in x_list]
         attn_bias._batch_sizes = batch_sizes
         attn_bias_cache[all_shapes] = attn_bias
     
@@ -281,11 +323,21 @@ class TransformerBlock(nn.Module):
         q = q.to(v.dtype)
         k = k.to(v.dtype)
         
-        x = xops.memory_efficient_attention(
-            q, k, v,
-            attn_bias=attn_bias,
-            scale=self.scale
-        )
+        if xops is not None:
+            x = xops.memory_efficient_attention(
+                q, k, v,
+                attn_bias=attn_bias,
+                scale=self.scale
+            )
+        else:
+            # SDPA fallback (no xformers): [B, N, H, hd] -> [B, H, N, hd]
+            mask = None
+            if attn_bias is not None:
+                mask = attn_bias.materialize(q.device, q.dtype)
+            x = F.scaled_dot_product_attention(
+                q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2),
+                attn_mask=mask, scale=self.scale
+            ).transpose(1, 2)
         
         x = x.reshape(B, N, C)
         x = self.proj(x)

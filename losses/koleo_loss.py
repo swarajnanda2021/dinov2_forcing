@@ -36,7 +36,7 @@ class KoLeoLoss(nn.Module):
         Returns:
             Loss value encouraging uniform distribution
         """
-        with torch.cuda.amp.autocast(enabled=False):
+        with torch.autocast(device_type=student_output.device.type, enabled=False):
             student_output = F.normalize(student_output, eps=eps, p=2, dim=-1)
             I = self.pairwise_NNs_inner(student_output)
             distances = self.pdist(student_output, student_output[I])

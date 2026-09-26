@@ -91,6 +91,9 @@ def train_dinov2(args):
 
     print("\n".join("%s: %s" % (k, str(v)) for k, v in sorted(dict(vars(args)).items())))
     cudnn.benchmark = True
+    # Device: CUDA on the cluster; CPU only for the local dry run (scripts/local_dryrun.sh).
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    amp_device_type = device.type
 
     # Augmentation configuration
     augmentation_free_mode = (args.global_views == 0)
@@ -229,14 +232,14 @@ def train_dinov2(args):
             embed_dim=args.embeddingdim,
             bias=True
         )
-        prototype_bank = prototype_bank.cuda()
+        prototype_bank = prototype_bank.to(device)
 
         print(f"Created LinearPrototypeBank with {args.num_prototypes} soft prototypes")
     else:
         print("Prototype clustering disabled (--use_prototype_clustering=False)")
 
-    student = student.cuda()
-    teacher = teacher.cuda()
+    student = student.to(device)
+    teacher = teacher.to(device)
 
     # Per-block torch.compile. Compiling backbone-as-a-whole trips a dynamo guard on the module-global
     # attn_bias_cache in models/vision_transformer/modern_vit.py ("Duplicate tensors found"); compiling
@@ -279,14 +282,14 @@ def train_dinov2(args):
         warmup_teacher_temp_iters=args.teacher_temp_warmup_iters,
         n_iterations=5,
         student_temp=0.1,
-    ).cuda()
+    ).to(device)
 
     ibot_patch_loss = iBOTPatchLoss(
         student_temp=0.1,
         n_iterations=3,
-    ).cuda()
+    ).to(device)
 
-    dino_koleo_loss = KoLeoLoss().cuda()
+    dino_koleo_loss = KoLeoLoss().to(device)
     print("Using KoLeo regularizer (DINOv2 default)")
 
     patch_prototype_loss = None
@@ -296,7 +299,7 @@ def train_dinov2(args):
             embed_dim=args.embeddingdim,
             teacher_temp=args.clustering_teacher_temp,
             student_temp=args.clustering_student_temp,
-        ).cuda()
+        ).to(device)
 
         print(f"Initialized PatchPrototypeLoss with {args.num_prototypes} prototypes")
     else:
@@ -423,7 +426,8 @@ def train_dinov2(args):
         try:
             print("Restoring RNG states from checkpoint...")
             torch.set_rng_state(loaded_checkpoint['torch_rng_state'])
-            torch.cuda.set_rng_state_all(loaded_checkpoint['cuda_rng_state'])
+            if torch.cuda.is_available():
+                torch.cuda.set_rng_state_all(loaded_checkpoint['cuda_rng_state'])
             np.random.set_state(loaded_checkpoint['numpy_rng_state'])
             random.setstate(loaded_checkpoint['random_rng_state'])
             print(f"Successfully restored all RNG states to iteration {current_iteration}.")
@@ -485,7 +489,7 @@ def train_dinov2(args):
 
         teacher_global_crops = []
         for i in range(args.global_views):
-            teacher_global_crops.append(batch_data[idx].cuda(non_blocking=True))
+            teacher_global_crops.append(batch_data[idx].to(device, non_blocking=True))
             idx += 1
 
         student_all_crops = []
@@ -494,7 +498,7 @@ def train_dinov2(args):
 
         student_local_crops = []
         for i in range(args.n_standard_local_crops):
-            crop = batch_data[idx].cuda(non_blocking=True)
+            crop = batch_data[idx].to(device, non_blocking=True)
             student_local_crops.append(crop)
             student_all_crops.append(crop)
             idx += 1
@@ -552,7 +556,7 @@ def train_dinov2(args):
             optimizer_prototypes.zero_grad()
 
         # ========== Forward passes and loss computation ==========
-        with torch.cuda.amp.autocast(dtype=torch.bfloat16, enabled=args.use_fp16):
+        with torch.autocast(device_type=amp_device_type, dtype=torch.bfloat16, enabled=args.use_fp16):
             # ========== DINO Loss with Sequence Packing ==========
 
             student_masks = [block_masks_1, block_masks_2] + [None] * len(student_local_crops)
@@ -581,7 +585,7 @@ def train_dinov2(args):
             global_features_list = student_output['features_list'][:num_global_total]
             global_cls_tokens = [feat_dict['clstoken'] for feat_dict in global_features_list]
 
-            koleo_loss_val = torch.tensor(0.0).cuda()
+            koleo_loss_val = torch.tensor(0.0, device=device)
             if len(global_cls_tokens) > 0:
                 # Canonical DINOv2 / Virchow2: SUM the regularizer over the global
                 # crops (do NOT average). Applies to both KoLeo and KDE.
@@ -612,7 +616,7 @@ def train_dinov2(args):
                 )
                 del s_proj_1, t_proj_1, s_gathered_1, t_gathered_1
             else:
-                ibot_loss_g1 = torch.tensor(0.0, device='cuda')
+                ibot_loss_g1 = torch.tensor(0.0, device=device)
 
             # ---------- Block iBOT: Global crop 2 ----------
             s_gathered_2, weights_2, _ = _gather_and_compute_weights(
@@ -633,7 +637,7 @@ def train_dinov2(args):
                 )
                 del s_proj_2, t_proj_2, s_gathered_2, t_gathered_2
             else:
-                ibot_loss_g2 = torch.tensor(0.0, device='cuda')
+                ibot_loss_g2 = torch.tensor(0.0, device=device)
 
             ibot_loss_val = (ibot_loss_g1 + ibot_loss_g2) / 2.0
 
@@ -644,7 +648,7 @@ def train_dinov2(args):
         if args.use_prototype_clustering:
             current_teacher_temp = dino_class_loss.teacher_temp_schedule(current_iteration)
 
-            with torch.cuda.amp.autocast(dtype=torch.bfloat16, enabled=args.use_fp16):
+            with torch.autocast(device_type=amp_device_type, dtype=torch.bfloat16, enabled=args.use_fp16):
                 # ---------- Block mask prototype: Global crop 1 ----------
                 clust_loss_g1, proto_loss_g1, koleo_proto_g1, Q_g1 = patch_prototype_loss(
                     teacher_patch_tokens_g1,
@@ -675,10 +679,10 @@ def train_dinov2(args):
             # plus koleo once averaged over g1/g2.
             prototype_loss = teacher_proto_loss + koleo_proto_loss
         else:
-            clustering_loss = torch.tensor(0.0).cuda()
-            teacher_proto_loss = torch.tensor(0.0).cuda()
-            koleo_proto_loss = torch.tensor(0.0).cuda()
-            prototype_loss = torch.tensor(0.0).cuda()
+            clustering_loss = torch.tensor(0.0, device=device)
+            teacher_proto_loss = torch.tensor(0.0, device=device)
+            koleo_proto_loss = torch.tensor(0.0, device=device)
+            prototype_loss = torch.tensor(0.0, device=device)
 
         # ========== Compute Total Losses ==========
         student_loss = (
@@ -744,7 +748,7 @@ def train_dinov2(args):
                 param_k.data.mul_(m).add_((1 - m) * param_q.detach().data)
 
         # ========== Clean cache periodically ==========
-        if current_iteration % 100 == 0:
+        if current_iteration % 100 == 0 and torch.cuda.is_available():
             torch.cuda.empty_cache()
 
         # ========== Logging ==========
@@ -813,7 +817,7 @@ def train_dinov2(args):
                 'dataset_position': dataset_position,
                 'args': args,
                 'torch_rng_state': torch.get_rng_state(),
-                'cuda_rng_state': torch.cuda.get_rng_state_all(),
+                'cuda_rng_state': torch.cuda.get_rng_state_all() if torch.cuda.is_available() else [],
                 'numpy_rng_state': np.random.get_state(),
                 'random_rng_state': random.getstate(),
             }

@@ -762,17 +762,21 @@ def init_distributed_mode(args):
         os.environ['MASTER_ADDR'] = '127.0.0.1'
         os.environ['MASTER_PORT'] = '29500'
     else:
-        print('Does not support training without GPU.')
-        sys.exit(1)
+        # CPU single process (local dry run only): gloo backend, world_size 1.
+        print('No GPU found: running a single CPU process (gloo).')
+        args.rank, args.gpu, args.world_size = 0, 0, 1
+        os.environ['MASTER_ADDR'] = '127.0.0.1'
+        os.environ.setdefault('MASTER_PORT', '29500')
 
     dist.init_process_group(
-        backend="nccl",
+        backend="nccl" if torch.cuda.is_available() else "gloo",
         init_method=args.dist_url,
         world_size=args.world_size,
         rank=args.rank,
     )
 
-    torch.cuda.set_device(args.gpu)
+    if torch.cuda.is_available():
+        torch.cuda.set_device(args.gpu)
     print('| distributed init (rank {}): {}'.format(
         args.rank, args.dist_url), flush=True)
     dist.barrier()
