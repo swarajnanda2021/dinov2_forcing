@@ -6,18 +6,23 @@
 # `git log -1`, an ensure_arg sed helper that sets `args.<key> = <value>` lines in
 # run_with_submitit.py, the log-path patch, the SLURM constraint patch, and a printed launch
 # command. This script never submits; run the printed command by hand (or scripts/launch_all.sh).
+# It refuses to touch an existing experiment directory (exit 1): remove it by hand first.
+#
+# Every arm: ViT-S, batch 512 on one GPU, 1_000_001 iterations, periodic checkpoints every
+# 50_000 iterations (checkpoint_iter_*.pth) and a rolling checkpoint.pth every 5_000.
+# SMOKE arms: 501 iterations, both checkpoint periods 250.
 #
 # Overridable from the environment (used by the local acceptance test):
 #   BASE_DIR       experiment root            (default /data1/vanderbc/test_dinov2_swaraj)
 #   FORCING_REPO   git clone source           (default the public GitHub repository)
-#   PARTITION      SLURM partition            (default gpu)
+#   PARTITION      SLURM partition            (default vanderbc_gpu)
 set -e
 
 RUN="${1:-}"
 GITHUB_REPO="${FORCING_REPO:-https://github.com/swarajnanda2021/dinov2_forcing.git}"
 BRANCH="main"
 BASE_DIR="${BASE_DIR:-/data1/vanderbc/test_dinov2_swaraj}"
-PARTITION="${PARTITION:-gpu}"
+PARTITION="${PARTITION:-vanderbc_gpu}"
 SLURM_CONSTRAINT="h100"          # the one-line constraint patch; run_with_submitit.py ships with 'h100'
 
 ARMS="R0 R1 R2 R3 R4 R5 R6 R7 R1_PROTO R0_PROTO SMOKE SMOKE_PROTO"
@@ -34,7 +39,7 @@ echo "Setup: $exp_name  (branch: $BRANCH)"
 echo "  ViT-S/16 forcing study, one knob per arm: $RUN"
 echo "========================================"
 
-[ -d "$exp_dir" ] && { echo "  Removing existing dir..."; rm -rf "$exp_dir"; }
+[ -d "$exp_dir" ] && { echo "exists: $exp_dir"; exit 1; }
 mkdir -p "$exp_dir"; cd "$exp_dir"
 
 echo "  Cloning ($BRANCH from $GITHUB_REPO)..."
@@ -73,17 +78,18 @@ ensure_arg () {
 
 echo "  Common settings (every arm)..."
 ensure_arg vit_variant              '"S"'
-ensure_arg batch_size_per_gpu       256
+ensure_arg batch_size_per_gpu       512
 ensure_arg num_workers              10
-ensure_arg total_iterations         200_001
+ensure_arg total_iterations         1_000_001
 ensure_arg warmup_iterations        10_000
-ensure_arg save_checkpoint_freq     10_000
+ensure_arg save_checkpoint_freq     50_000      # periodic checkpoint_iter_*.pth
+ensure_arg rolling_checkpoint_freq  5_000       # rolling checkpoint.pth
 ensure_arg momentum_teacher         0.992
 ensure_arg momentum_teacher_end     1.0
 ensure_arg weight_decay             0.04
 ensure_arg weight_decay_end         0.4
 ensure_arg min_lr                   1e-6
-ensure_arg lr                       2e-4        # base at global batch 1024; the trainer scales by sqrt(256/1024) -> 1e-4 on one GPU
+ensure_arg lr                       2e-4        # base at global batch 1024; the trainer scales by sqrt(512/1024) -> 1.41e-4 on one GPU
 ensure_arg drop_path_rate           0.1         # source recipe launcher value (with drop_path_uniform=True)
 ensure_arg n_standard_local_crops   8
 ensure_arg local_crop_size          96
@@ -121,8 +127,10 @@ case "$RUN" in
   R7) r1_base; ensure_arg mask_ratio_min 0.5; ensure_arg mask_ratio_max 0.75 ;;
   R1_PROTO) r1_base; ensure_arg use_prototype_clustering True; ensure_arg num_prototypes 16384; ensure_arg clustering_weight 1.0 ;;
   R0_PROTO)          ensure_arg use_prototype_clustering True; ensure_arg num_prototypes 16384; ensure_arg clustering_weight 1.0 ;;
-  SMOKE)       r1_base; ensure_arg total_iterations 501; ensure_arg warmup_iterations 100; ensure_arg diag_every 100; ensure_arg save_checkpoint_freq 250 ;;
-  SMOKE_PROTO) r1_base; ensure_arg total_iterations 501; ensure_arg warmup_iterations 100; ensure_arg diag_every 100; ensure_arg save_checkpoint_freq 250
+  SMOKE)       r1_base; ensure_arg total_iterations 501; ensure_arg warmup_iterations 100; ensure_arg diag_every 100
+               ensure_arg save_checkpoint_freq 250; ensure_arg rolling_checkpoint_freq 250 ;;
+  SMOKE_PROTO) r1_base; ensure_arg total_iterations 501; ensure_arg warmup_iterations 100; ensure_arg diag_every 100
+               ensure_arg save_checkpoint_freq 250; ensure_arg rolling_checkpoint_freq 250
                ensure_arg use_prototype_clustering True ;;
 esac
 
@@ -132,7 +140,7 @@ echo ""
 echo "  Resolved settings ('MISSING' => fix before launch):"
 for kv in \
     args.vit_variant args.batch_size_per_gpu args.num_workers args.total_iterations args.warmup_iterations \
-    args.save_checkpoint_freq args.momentum_teacher args.momentum_teacher_end args.weight_decay args.weight_decay_end \
+    args.save_checkpoint_freq args.rolling_checkpoint_freq args.momentum_teacher args.momentum_teacher_end args.weight_decay args.weight_decay_end \
     args.min_lr args.lr args.drop_path_rate args.n_standard_local_crops args.local_crop_size \
     args.ibot_loss_weight args.mask_ratio_min args.mask_ratio_max args.mask_sample_probability \
     args.koleo_loss_weight args.use_prototype_clustering args.num_prototypes args.clustering_weight \

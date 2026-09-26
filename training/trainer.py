@@ -894,7 +894,10 @@ def train_dinov2(args):
                 f.write(json.dumps(log_stats) + "\n")
 
         # ========== Save checkpoints ==========
-        if current_iteration % args.save_checkpoint_freq == 0:
+        # periodic: checkpoint_iter_<it>.pth (kept); rolling: checkpoint.pth (overwritten, the resume file)
+        periodic_due = current_iteration % args.save_checkpoint_freq == 0
+        rolling_due = current_iteration % getattr(args, 'rolling_checkpoint_freq', 5000) == 0
+        if periodic_due or rolling_due:
             save_dict = {
                 'student': student.state_dict(),
                 'teacher': teacher.state_dict(),
@@ -920,8 +923,12 @@ def train_dinov2(args):
             if fp16_scaler is not None:
                 save_dict['fp16_scaler'] = fp16_scaler.state_dict()
 
-            utils.save_on_master(save_dict, os.path.join(args.output_dir, f'checkpoint_iter_{current_iteration:08d}.pth'))
-            utils.save_on_master(save_dict, os.path.join(args.output_dir, 'checkpoint.pth'))
+            if periodic_due:
+                utils.save_on_master(save_dict, os.path.join(args.output_dir, f'checkpoint_iter_{current_iteration:08d}.pth'))
+            if rolling_due:
+                utils.save_on_master(save_dict, os.path.join(args.output_dir, 'checkpoint.pth'))
+            if utils.is_main_process():
+                print(f"[ckpt] it={current_iteration} rolling={int(rolling_due)} periodic={int(periodic_due)}", flush=True)
 
         current_iteration += 1
 

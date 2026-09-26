@@ -48,7 +48,7 @@ PYEOF
 SRC="SYN:$WORK/data:synthetic_dataset_index.pkl"
 COMMON=(--dataset_sources "$SRC" --vit_variant S --batch_size_per_gpu 4 --n_standard_local_crops 2
         --local_crop_size 96 --warmup_iterations 2 --total_iterations 7 --diag_every 2
-        --diag_probe_size 16 --diag_probe_manifest "$WORK/probe_manifest.json" --save_checkpoint_freq 3
+        --diag_probe_size 16 --diag_probe_manifest "$WORK/probe_manifest.json" --save_checkpoint_freq 6 --rolling_checkpoint_freq 3
         --num_workers 2 --seed 0 --min_lr 1e-6 --lr 2e-4 --momentum_teacher 0.992
         --ibot_loss_weight 1.0 --mask_ratio_min 0.1 --mask_ratio_max 0.5 --mask_sample_probability 0.5
         --koleo_loss_weight 0.1 --drop_path_rate 0.1 --drop_path_uniform True --ffn_type mlp
@@ -69,6 +69,7 @@ run_arm () {
     grep -h '^\[sched\]' "$out/train.log"
     grep -h '^\[diag\]' "$out/train.log"
     grep -h '^\[diag-time\]' "$out/train.log"
+    grep -h '^\[ckpt\]' "$out/train.log"
     grep -h '^It ' "$out/train.log" | tail -1
 }
 
@@ -97,8 +98,11 @@ for a in $ARMS; do
     expect 4 '^\[diag\] it=[0246] branch=student' "$L" "$a student diag lines"
     expect 4 '^\[diag\] it=[0246] branch=teacher' "$L" "$a teacher diag lines"
     expect 8 '"branch"' "$WORK/runs/$a/diag.jsonl" "$a diag.jsonl records"
-    test -f "$WORK/runs/$a/checkpoint_iter_00000003.pth" || { echo "missing iteration-3 checkpoint for $a"; exit 1; }
+    expect 2 '^\[ckpt\] it=[36] rolling=1' "$WORK/runs/$a/train.log" "$a rolling checkpoint.pth at 3 and 6"
+    expect 1 '^\[ckpt\] it=6 rolling=1 periodic=1' "$WORK/runs/$a/train.log" "$a periodic checkpoint at 6"
+    test -f "$WORK/runs/$a/checkpoint.pth" || { echo "missing checkpoint.pth for $a"; exit 1; }
     test -f "$WORK/runs/$a/checkpoint_iter_00000006.pth" || { echo "missing iteration-6 checkpoint for $a"; exit 1; }
+    test ! -f "$WORK/runs/$a/checkpoint_iter_00000003.pth" || { echo "unexpected periodic checkpoint at 3 for $a"; exit 1; }
 done
 # constant schedules on R1: lr after warmup == peak (2e-4 * sqrt(4/1024)), wd 0.4, m 0.992 at every [sched]
 has_arm () { case " $ARMS " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
@@ -119,23 +123,29 @@ expect 1 'wrote manifest' "$WORK/runs/$FIRST_ARM/train.log" "manifest written on
 for a in $ARMS; do [ "$a" = "$FIRST_ARM" ] || expect 1 'loaded manifest' "$WORK/runs/$a/train.log" "manifest reused ($a)"; done
 
 if ! has_arm R1; then echo; echo "DRY RUN PASSED  (work dir: $WORK; no R1 arm, resume test skipped)"; exit 0; fi
-echo; echo "== kill-and-resume: R1 from the iteration-3 checkpoint =="
-OUT="$WORK/runs/R1"
-cp "$OUT/train.log" "$OUT/train_first.log"
-cp "$OUT/diag.jsonl" "$OUT/diag_first.jsonl"
+echo; echo "== kill-and-resume: R1 from the rolling checkpoint.pth written at iteration 3 =="
+# A first pass stopped after iteration 3 (total_iterations 4) leaves only the rolling checkpoint.pth
+# (rolling every 3, periodic every 6 -> no checkpoint_iter file); the second pass resumes from it.
+OUT="$WORK/runs/R1_resume"; mkdir -p "$OUT"
 cp "$WORK/probe_manifest.json" "$WORK/probe_manifest_before.json"
-cp "$OUT/checkpoint_iter_00000003.pth" "$OUT/checkpoint.pth"     # simulate a kill after iteration 3
-rm -f "$OUT/checkpoint_iter_00000006.pth"
+COMMON_KILL=("${COMMON[@]}"); for i in "${!COMMON_KILL[@]}"; do [ "${COMMON_KILL[$i]}" = "--total_iterations" ] && COMMON_KILL[$((i+1))]=4; done
+(cd "$OUT" && "$PY" "$REPO/main_train.py" "${COMMON_KILL[@]}" "${R1[@]}" --output_dir "$OUT" > "$OUT/train_first.log" 2>&1) \
+    || { echo "FIRST PASS FAILED"; tail -50 "$OUT/train_first.log"; exit 1; }
+grep -h '^\[ckpt\]' "$OUT/train_first.log"
+expect 1 '^\[ckpt\] it=3 rolling=1 periodic=0' "$OUT/train_first.log" "first pass: rolling checkpoint.pth at 3, no periodic"
+test -f "$OUT/checkpoint.pth" || { echo "missing checkpoint.pth after first pass"; exit 1; }
+test ! -f "$OUT/checkpoint_iter_00000003.pth" || { echo "unexpected periodic checkpoint at 3 after first pass"; exit 1; }
 (cd "$OUT" && "$PY" "$REPO/main_train.py" "${COMMON[@]}" "${R1[@]}" --output_dir "$OUT" > "$OUT/train_resume.log" 2>&1) \
     || { echo "RESUME FAILED"; tail -50 "$OUT/train_resume.log"; exit 1; }
 grep -h 'Resuming from iteration\|Starting training at iteration' "$OUT/train_resume.log"
-grep -h '^\[sched-config\]\|^\[sched\]\|^\[diag\]' "$OUT/train_resume.log"
+grep -h '^\[sched-config\]\|^\[sched\]\|^\[diag\]\|^\[ckpt\]' "$OUT/train_resume.log"
 expect 1 'Resuming from iteration 3' "$OUT/train_resume.log" "resume at iteration 3"
 expect 2 '^\[sched\] it=[46] ' "$OUT/train_resume.log" "sched lines at 4 and 6 after resume"
 expect 2 '^\[diag\] it=[46] branch=teacher' "$OUT/train_resume.log" "teacher diag at 4 and 6 after resume"
-diff <(grep -h '^\[sched-config\]' "$OUT/train_first.log") <(grep -h '^\[sched-config\]' "$OUT/train_resume.log") && echo "  ok: sched-config unchanged after resume"
-diff <(grep -h '^\[sched\] it=[46]' "$OUT/train_first.log") <(grep -h '^\[sched\] it=[46]' "$OUT/train_resume.log") && echo "  ok: [sched] values at 4 and 6 unchanged after resume"
+expect 1 '^\[ckpt\] it=6 rolling=1 periodic=1' "$OUT/train_resume.log" "resume: rolling + periodic checkpoint at 6"
+diff <(grep -h '^\[sched-config\]' "$WORK/runs/R1/train.log") <(grep -h '^\[sched-config\]' "$OUT/train_resume.log") && echo "  ok: sched-config unchanged after resume (vs the uninterrupted R1 run)"
+diff <(grep -h '^\[sched\] it=[46]' "$WORK/runs/R1/train.log") <(grep -h '^\[sched\] it=[46]' "$OUT/train_resume.log") && echo "  ok: [sched] values at 4 and 6 unchanged after resume (vs the uninterrupted R1 run)"
 cmp "$WORK/probe_manifest_before.json" "$WORK/probe_manifest.json" && echo "  ok: probe manifest unchanged after resume"
 expect 1 'loaded manifest' "$OUT/train_resume.log" "manifest reused on resume"
-test -f "$OUT/checkpoint_iter_00000006.pth" && echo "  ok: iteration-6 checkpoint rewritten after resume"
+test -f "$OUT/checkpoint_iter_00000006.pth" && echo "  ok: periodic iteration-6 checkpoint written after resume"
 echo; echo "DRY RUN PASSED  (work dir: $WORK)"

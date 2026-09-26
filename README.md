@@ -37,7 +37,7 @@ Existing arguments, kept as named in `configs/config.py`:
 | `--ibot_loss_weight`, `--mask_ratio_min`, `--mask_ratio_max`, `--mask_sample_probability` | iBOT weight and block-mask sampling |
 | `--koleo_loss_weight` | KoLeo weight on the global class tokens |
 | `--use_prototype_clustering`, `--num_prototypes`, `--clustering_weight`, `--clustering_teacher_temp`, `--clustering_student_temp` | patch prototype clustering loss |
-| `--save_checkpoint_freq`, `--num_workers`, `--seed` | checkpoint period, loader workers, seed |
+| `--save_checkpoint_freq`, `--num_workers`, `--seed` | periodic checkpoint period (`checkpoint_iter_<it>.pth`, kept), loader workers, seed |
 
 New arguments:
 
@@ -51,6 +51,7 @@ New arguments:
 | `--diag_probe_manifest` | none | JSON manifest of the shared probe tiles (created on first use) |
 | `--diag_probe_size` | 1024 | number of probe tiles drawn when the manifest is created |
 | `--diag_ibot_tokens` | 49 on CUDA, 16 on CPU | patch tokens per probe tile fed to the iBOT head for the entropy metrics |
+| `--rolling_checkpoint_freq` | 5000 | rolling `checkpoint.pth` period (overwritten; the file resume reads) |
 
 The schedules are built in `training/trainer.py` next to the source's `cosine_scheduler`
 calls. At startup the resolved schedules are printed, one line each:
@@ -72,14 +73,16 @@ entry used by the EMA update at that iteration:
 ## Arms
 
 Common settings for every arm (`scripts/run_forcing_suite.sh`): `vit_variant "S"`,
-`batch_size_per_gpu 256`, `num_workers 10`, `total_iterations 200_001`,
-`warmup_iterations 10_000`, `save_checkpoint_freq 10_000`, `momentum_teacher 0.992`,
-`weight_decay 0.04`, `weight_decay_end 0.4`, `min_lr 1e-6`, `lr 2e-4` (1e-4 applied at one
-GPU x 256), `drop_path_rate 0.1` (the source recipe launcher value, with `drop_path_uniform True`), `n_standard_local_crops 8`,
+`batch_size_per_gpu 512`, `num_workers 10`, `total_iterations 1_000_001`,
+`warmup_iterations 10_000`, `save_checkpoint_freq 50_000` (periodic, kept),
+`rolling_checkpoint_freq 5_000` (rolling `checkpoint.pth`), `momentum_teacher 0.992`,
+`weight_decay 0.04`, `weight_decay_end 0.4`, `min_lr 1e-6`, `lr 2e-4` (1.41e-4 applied at one
+GPU x 512), `drop_path_rate 0.1` (the source recipe launcher value, with `drop_path_uniform True`), `n_standard_local_crops 8`,
 `local_crop_size 96`, `ibot_loss_weight 1.0`, `mask_ratio_min 0.1`, `mask_ratio_max 0.5`,
 `mask_sample_probability 0.5`, `koleo_loss_weight 0.1`, `use_prototype_clustering False`,
 `diag_every 2000`, `diag_probe_manifest "$BASE_DIR/probe_manifest.json"`, `seed 0`.
-Launch: `python run_with_submitit.py --nodes 1 --ngpus 1 --partition gpu`.
+Launch: `python run_with_submitit.py --nodes 1 --ngpus 1 --partition vanderbc_gpu`. The suite
+script refuses to overwrite an existing experiment directory (it prints `exists: <dir>` and exits 1).
 
 | arm | change relative to the common settings |
 |---|---|
@@ -93,7 +96,7 @@ Launch: `python run_with_submitit.py --nodes 1 --ngpus 1 --partition gpu`.
 | R7 | R1 + `mask_ratio_min 0.5`, `mask_ratio_max 0.75` |
 | R1_PROTO | R1 + `use_prototype_clustering True`, `num_prototypes 16384`, `clustering_weight 1.0` |
 | R0_PROTO | R0 + `use_prototype_clustering True`, `num_prototypes 16384`, `clustering_weight 1.0` |
-| SMOKE | R1 with `total_iterations 501`, `warmup_iterations 100`, `diag_every 100`, `save_checkpoint_freq 250` |
+| SMOKE | R1 with `total_iterations 501`, `warmup_iterations 100`, `diag_every 100`, `save_checkpoint_freq 250`, `rolling_checkpoint_freq 250` |
 | SMOKE_PROTO | SMOKE + `use_prototype_clustering True` |
 
 `scripts/launch_all.sh` sets up R0 to R7 (eight GPUs, one each) and prints the eight launch

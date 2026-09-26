@@ -176,7 +176,9 @@ def get_args_parser():
     parser.add_argument('--output_dir', default=".", type=str,
                         help='Output directory for checkpoints and logs')
     parser.add_argument('--save_checkpoint_freq', default=2000, type=int,
-                        help='Checkpoint saving frequency')
+                        help='Periodic checkpoint frequency (checkpoint_iter_<it>.pth, kept)')
+    parser.add_argument('--rolling_checkpoint_freq', default=5000, type=int,
+                        help='Rolling checkpoint frequency (checkpoint.pth, overwritten; the resume file)')
     parser.add_argument('--seed', default=42, type=int,
                         help='Random seed')
 
