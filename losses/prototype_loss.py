@@ -137,7 +137,7 @@ class PatchPrototypeLoss(nn.Module):
             student_patch_tokens, token_masks, Q_tilde_all, prototype_bank,
             current_iteration, masks_weight=masks_weight)
 
-        # Preserve the original M==0 semantics: arrangement + koleo are zeroed when the
+        # Preserve the original M==0 behaviour: arrangement + koleo are zeroed when the
         # crop has no masked tokens (the pre-refactor forward early-returned all zeros;
         # M_total is derived from the masked-select shape, no extra host sync).
         if M_total == 0:

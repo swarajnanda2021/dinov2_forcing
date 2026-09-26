@@ -35,16 +35,16 @@ class BlockMaskGenerator:
         self.num_patches = self.height * self.width
         self.min_num_patches = min_num_patches
         max_aspect = max_aspect or 1 / min_aspect
-        self.log_aspect_ratio = (math.log(min_aspect), math.log(max_aspect))
+        self.log_aspect = (math.log(min_aspect), math.log(max_aspect))
 
     def _mask(self, mask, max_mask_patches):
         """Attempt to place a rectangular block on the mask."""
         delta = 0
         for _ in range(10):
             target_area = random.uniform(self.min_num_patches, max_mask_patches)
-            aspect_ratio = math.exp(random.uniform(*self.log_aspect_ratio))
-            h = int(round(math.sqrt(target_area * aspect_ratio)))
-            w = int(round(math.sqrt(target_area / aspect_ratio)))
+            aspect = math.exp(random.uniform(*self.log_aspect))
+            h = int(round(math.sqrt(target_area * aspect)))
+            w = int(round(math.sqrt(target_area / aspect)))
 
             if w < self.width and h < self.height:
                 top = random.randint(0, self.height - h)

@@ -17,7 +17,7 @@ if __name__ == '__main__':
     
     # Parse arguments
     parser = argparse.ArgumentParser(
-        'Semantic-DINOv2 with Sequence Packing', 
+        'DINOv2 forcing study', 
         parents=[get_args_parser()]
     )
     args = parser.parse_args()
