@@ -1,5 +1,7 @@
 #!/bin/bash
-# scripts/run_forcing_suite.sh <ARM> -- set up one arm of the ViT-S forcing study.
+# scripts/run_forcing_suite.sh <ARM> -- set up one arm of the ViT-S forcing study, wave 2
+# (scale mimicry on the vanilla recipe): BASE (2 x 256), DEPTH36 (4 x 128, 36 blocks),
+# LSCALE (2 x 256, LayerScale init 1e-2). Global batch 512, 400_001 iterations, cosine schedules.
 #
 # Mechanics follow run_sub_stab_suite_rev13.sh of the source fork: one experiment directory
 # per arm under BASE_DIR, a fresh clone of this repository into it, CLONED_COMMIT.txt from
@@ -8,9 +10,8 @@
 # command. This script never submits; run the printed command by hand (or scripts/launch_all.sh).
 # It refuses to touch an existing experiment directory (exit 1): remove it by hand first.
 #
-# Every arm: ViT-S, batch 512 on one GPU, 1_000_001 iterations, periodic checkpoints every
-# 50_000 iterations (checkpoint_iter_*.pth) and a rolling checkpoint.pth every 5_000.
-# SMOKE arms: 501 iterations, both checkpoint periods 250.
+# Every arm: ViT-S, global batch 512, 400_001 iterations, periodic checkpoints every 50_000
+# iterations (checkpoint_iter_*.pth) and a rolling checkpoint.pth every 5_000.
 #
 # Overridable from the environment (used by the local acceptance test):
 #   BASE_DIR       experiment root            (default /data1/vanderbc/test_dinov2_swaraj)
@@ -25,7 +26,7 @@ BASE_DIR="${BASE_DIR:-/data1/vanderbc/test_dinov2_swaraj}"
 PARTITION="${PARTITION:-vanderbc_gpu}"
 SLURM_CONSTRAINT="h100"          # the one-line constraint patch; run_with_submitit.py ships with 'h100'
 
-ARMS="R0 R1 R2 R3 R4 R5 R6 R7 R1_PROTO R0_PROTO SMOKE SMOKE_PROTO"
+ARMS="BASE DEPTH36 LSCALE"
 case " $ARMS " in
   *" $RUN "*) ;;
   *) echo "Usage: $0 <ARM>"; echo "  ARM: $ARMS"; exit 1 ;;
@@ -36,7 +37,7 @@ exp_dir="$BASE_DIR/$exp_name"
 
 echo "========================================"
 echo "Setup: $exp_name  (branch: $BRANCH)"
-echo "  ViT-S/16 forcing study, one knob per arm: $RUN"
+echo "  ViT-S/16 forcing study wave 2 (scale mimicry), arm: $RUN"
 echo "========================================"
 
 [ -d "$exp_dir" ] && { echo "exists: $exp_dir"; exit 1; }
@@ -78,9 +79,8 @@ ensure_arg () {
 
 echo "  Common settings (every arm)..."
 ensure_arg vit_variant              '"S"'
-ensure_arg batch_size_per_gpu       512
 ensure_arg num_workers              10
-ensure_arg total_iterations         1_000_001
+ensure_arg total_iterations         400_001
 ensure_arg warmup_iterations        10_000
 ensure_arg save_checkpoint_freq     50_000      # periodic checkpoint_iter_*.pth
 ensure_arg rolling_checkpoint_freq  5_000       # rolling checkpoint.pth
@@ -89,7 +89,7 @@ ensure_arg momentum_teacher_end     1.0
 ensure_arg weight_decay             0.04
 ensure_arg weight_decay_end         0.4
 ensure_arg min_lr                   1e-6
-ensure_arg lr                       2e-4        # base at global batch 1024; the trainer scales by sqrt(512/1024) -> 1.41e-4 on one GPU
+ensure_arg lr                       2e-4        # base at global batch 1024; the trainer scales by sqrt(global_batch/1024) -> 1.41e-4 at 512
 ensure_arg drop_path_rate           0.1         # source recipe launcher value (with drop_path_uniform=True)
 ensure_arg n_standard_local_crops   8
 ensure_arg local_crop_size          96
@@ -103,35 +103,15 @@ ensure_arg diag_every               2000
 ensure_arg diag_probe_manifest      "\"$BASE_DIR/probe_manifest.json\""
 ensure_arg diag_probe_size          1024
 ensure_arg seed                     0
-# recipe control shapes (R0); R1-based arms override below
 ensure_arg lr_schedule              '"cosine"'
 ensure_arg wd_schedule              '"cosine"'
 ensure_arg momentum_schedule        '"cosine"'
 
-r1_base () {
-    ensure_arg lr_schedule          '"constant"'
-    ensure_arg wd_schedule          '"constant"'
-    ensure_arg weight_decay         0.4
-    ensure_arg momentum_schedule    '"constant"'
-}
-
 echo "  Arm: $RUN"
 case "$RUN" in
-  R0) ;;                                   # recipe control: cosine lr / wd / momentum
-  R1) r1_base ;;
-  R2) r1_base; ensure_arg weight_decay 1.0 ;;
-  R3) r1_base; ensure_arg weight_decay 0.1 ;;
-  R4) r1_base; ensure_arg lr 1e-4 ;;                                    # 0.5 x the R1 base lr
-  R5) r1_base; ensure_arg ibot_loss_weight 0.5 ;;
-  R6) r1_base; ensure_arg n_standard_local_crops 16; ensure_arg local_crop_size 64 ;;
-  R7) r1_base; ensure_arg mask_ratio_min 0.5; ensure_arg mask_ratio_max 0.75 ;;
-  R1_PROTO) r1_base; ensure_arg use_prototype_clustering True; ensure_arg num_prototypes 4096; ensure_arg clustering_weight 1.0 ;;
-  R0_PROTO)          ensure_arg use_prototype_clustering True; ensure_arg num_prototypes 4096; ensure_arg clustering_weight 1.0 ;;
-  SMOKE)       r1_base; ensure_arg total_iterations 501; ensure_arg warmup_iterations 100; ensure_arg diag_every 100
-               ensure_arg save_checkpoint_freq 250; ensure_arg rolling_checkpoint_freq 250 ;;
-  SMOKE_PROTO) r1_base; ensure_arg total_iterations 501; ensure_arg warmup_iterations 100; ensure_arg diag_every 100
-               ensure_arg save_checkpoint_freq 250; ensure_arg rolling_checkpoint_freq 250
-               ensure_arg use_prototype_clustering True ;;
+  BASE)    ensure_arg batch_size_per_gpu 256; NGPUS=2 ;;                                   # vanilla control
+  DEPTH36) ensure_arg batch_size_per_gpu 128; ensure_arg depth 36; NGPUS=4 ;;              # 36 blocks, width/heads unchanged
+  LSCALE)  ensure_arg batch_size_per_gpu 256; ensure_arg layerscale_init 1e-2; NGPUS=2 ;;  # LayerScale start 1e-2 (recipe: 1e-5)
 esac
 
 mkdir -p "$exp_dir/logs"
@@ -144,7 +124,7 @@ for kv in \
     args.min_lr args.lr args.drop_path_rate args.n_standard_local_crops args.local_crop_size \
     args.ibot_loss_weight args.mask_ratio_min args.mask_ratio_max args.mask_sample_probability \
     args.koleo_loss_weight args.use_prototype_clustering args.num_prototypes args.clustering_weight \
-    args.lr_schedule args.wd_schedule args.momentum_schedule \
+    args.lr_schedule args.wd_schedule args.momentum_schedule args.depth args.layerscale_init \
     args.diag_every args.diag_probe_manifest args.diag_probe_size args.seed ; do
         hit=$(grep -nE "^[[:space:]]*${kv//./\\.}[[:space:]]*=" run_with_submitit.py | head -1)
         printf "    %-34s %s\n" "$kv" "${hit:-MISSING}"
@@ -153,7 +133,7 @@ echo "    GPU constraint -> $(grep -n "slurm_constraint" run_with_submitit.py | 
 echo "    Log path       -> $(grep -n 'p = Path(' run_with_submitit.py | head -1)"
 echo "    Clone commit   -> $(cat "$exp_dir/CLONED_COMMIT.txt")"
 
-LAUNCH_CMD="cd $exp_dir && PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python run_with_submitit.py --nodes 1 --ngpus 1 --partition $PARTITION"
+LAUNCH_CMD="cd $exp_dir && PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python run_with_submitit.py --nodes 1 --ngpus $NGPUS --partition $PARTITION"
 echo ""
 echo "  NOT submitting. Launch manually with:"
 echo "    $LAUNCH_CMD"

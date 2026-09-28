@@ -197,6 +197,11 @@ def train_dinov2(args):
         layerscale_init=effective_layerscale_init,
         mlp_layer=mlp_layer_cls,
     )
+    if utils.is_main_process():
+        print(f"[model] variant={args.vit_variant} depth={len(student_encoder.blocks)} "
+              f"embed={args.embeddingdim} heads={args.vitheads} "
+              f"layerscale_init={effective_layerscale_init if effective_layerscale_init is not None else 'cait'}",
+              flush=True)
 
     teacher_encoder = deepcopy(student_encoder)
 

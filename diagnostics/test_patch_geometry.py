@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from diagnostics.patch_geometry import (
     cls_patch_cos, within_between_parts, within_effrk_sum, effective_rank,
     locality, locality_index_sets, sinkhorn_knopp_local, target_entropies,
-    pnorm_stats, attention_routing,
+    pnorm_stats, attention_routing, attention_entropy, tile_mean_cosines, cls_embed_cosine_sum,
 )
 
 
@@ -82,6 +82,21 @@ def main():
     results.append(check("patch_route (uniform attention)", pm / cnt, 3 / N, 1e-6))
     results.append(check("cls_route (uniform attention)", cm / cnt, 1 / N, 1e-6))
     results.append(check("row max (uniform attention)", float(row_max.max()), 1 / N, 1e-6))
+
+    # 8. identical patches -> cos_patch_tilemean = 1 and cos_cls_tilemean = cos(c, x)
+    cp, cc = tile_mean_cosines(base, c)
+    results.append(check("cos_patch_tilemean (identical patches)", cp / B, 1.0, 1e-6))
+    results.append(check("cos_cls_tilemean (identical patches) == cos(c, x)", cc / B,
+                         float((c * base[:, 0]).sum(-1).mean()), 1e-6))
+    # class token equal to its embedding -> cos_cls_embed = 1
+    results.append(check("cos_cls_embed (cls == embedding)", cls_embed_cosine_sum(c[:1], c[0]) / 1, 1.0, 1e-6))
+    # 9. uniform attention row -> attn_entropy = log N, attn_entropy_frac = 1.0
+    es, ec, nk = attention_entropy(attn, num_reg=4)
+    results.append(check("attn_entropy (uniform rows) == log N", es / ec, math.log(N), 1e-6))
+    results.append(check("attn_entropy_frac (uniform rows)", (es / ec) / math.log(nk), 1.0, 1e-6))
+    one_hot = torch.zeros(2, 3, N, N); one_hot[..., 0] = 1.0
+    es1, ec1, _ = attention_entropy(one_hot, num_reg=4)
+    results.append(check("attn_entropy (one-hot rows)", es1 / ec1, 0.0, 1e-6))
 
     n_fail = results.count(False)
     print(f"\n{len(results) - n_fail}/{len(results)} checks passed")

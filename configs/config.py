@@ -22,6 +22,9 @@ def apply_vit_variant(args):
     if variant:
         for k, v in VIT_CONFIGS[variant].items():
             setattr(args, k, v)
+    depth = getattr(args, 'depth', None)
+    if depth is not None:
+        args.vitdepth = depth          # --depth overrides the variant's block count (width, heads unchanged)
     return args
 
 
@@ -46,6 +49,9 @@ def get_args_parser():
     parser.add_argument('--vit_variant', default=None, type=str, choices=list(VIT_CONFIGS),
                         help='ViT size (S/B/L/H/G). When set, overrides --embeddingdim, '
                              '--vitdepth and --vitheads with the standard DINOv2 values.')
+    parser.add_argument('--depth', default=None, type=int,
+                        help='Number of transformer blocks. None keeps the variant\'s depth (--vitdepth); '
+                             'a value overrides it at the variant\'s width and heads.')
     parser.add_argument('--out_dim', default=65536, type=int,
                         help='Output dimension of projection heads')
     parser.add_argument('--norm_last_layer', default=False, type=utils.bool_flag,

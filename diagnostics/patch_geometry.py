@@ -25,6 +25,7 @@ DIAG_KEYS = [
     'cls_patch_cos', 'within_between', 'within_effrk', 'patch_effrk', 'cls_effrk', 'locality',
     'ibot_tok_H', 'ibot_img_H', 'pnorm_p50', 'pnorm_p99', 'pnorm_max_over_p50',
     'reg_route', 'patch_route', 'cls_route', 'aw_p99',
+    'attn_entropy', 'attn_entropy_frac', 'cos_patch_tilemean', 'cos_cls_tilemean', 'cos_cls_embed',
 ]
 
 # iBOT target entropy is measured on a fixed random subset of tokens per tile (seed 0): the
@@ -168,6 +169,30 @@ def attention_routing(attn, num_reg):
     return float(reg_mass.item()), float(patch_mass.item()), float(cls_mass.item()), count, row_max
 
 
+def attention_entropy(attn, num_reg):
+    """attn: [B, H, N, N] softmax rows. Returns (sum of row entropies in nats over patch queries,
+    heads and batch; count of those rows; number of keys N)."""
+    rows = attn[:, :, num_reg + 1:, :].float()
+    H = -(rows * torch.log(rows.clamp(min=1e-12))).sum(-1)      # [B, H, Pq]
+    return float(H.sum().item()), H.numel(), attn.shape[-1]
+
+
+def tile_mean_cosines(Xn, cn):
+    """Xn: [B, P, d] L2-normalized patch tokens; cn: [B, d] L2-normalized class token.
+    mu_b = tile mean of Xn. Returns per-batch SUMS over tiles of
+    (mean_i cos(x_bi, mu_b), cos(c_b, mu_b)) so batches can be averaged."""
+    mu = F.normalize(Xn.mean(dim=1), dim=-1)                    # [B, d]
+    cos_patch = (Xn @ mu.unsqueeze(-1)).squeeze(-1).mean(dim=1) # [B]
+    cos_cls = (cn * mu).sum(-1)                                 # [B]
+    return float(cos_patch.sum().item()), float(cos_cls.sum().item())
+
+
+def cls_embed_cosine_sum(cn, cls_embed):
+    """Sum over tiles of cos(c_b, e_cls); cls_embed: [d] learned class-token parameter."""
+    e = F.normalize(cls_embed.float().reshape(-1), dim=0)
+    return float((cn @ e).sum().item())
+
+
 # ---------------------------------------------------------------- backbone probing
 
 def _last_block_attention(block, x_in):
@@ -209,6 +234,9 @@ def probe_backbone(backbone, patchhead, loader, device, amp_enabled, teacher_tem
     ibot_logits = []
     reg_m = patch_m = cls_m = 0.0; route_count = 0
     row_max_all = []
+    ent_sum = 0.0; ent_count = 0; n_keys = 1
+    cos_pt_sum = 0.0; cos_ct_sum = 0.0; cos_ce_sum = 0.0
+    cls_embed = backbone.cls_token.detach().reshape(-1)
     loc_sets = None
     tok_gen = torch.Generator().manual_seed(0)
 
@@ -246,6 +274,9 @@ def probe_backbone(backbone, patchhead, loader, device, amp_enabled, teacher_tem
             rm, pm, cm, cnt, row_max = attention_routing(attn, num_reg)
             reg_m += rm; patch_m += pm; cls_m += cm; route_count += cnt
             row_max_all.append(row_max.float())
+            es, ec, n_keys = attention_entropy(attn, num_reg); ent_sum += es; ent_count += ec
+            cp, cc = tile_mean_cosines(Xn, cn); cos_pt_sum += cp; cos_ct_sum += cc
+            cos_ce_sum += cls_embed_cosine_sum(cn, cls_embed)
     finally:
         handle.remove()
         backbone.train(was_training)
@@ -273,6 +304,11 @@ def probe_backbone(backbone, patchhead, loader, device, amp_enabled, teacher_tem
         'patch_route': patch_m / max(route_count, 1),
         'cls_route': cls_m / max(route_count, 1),
         'aw_p99': float(torch.quantile(row_max_cat, 0.99).item()),
+        'attn_entropy': ent_sum / max(ent_count, 1),
+        'attn_entropy_frac': (ent_sum / max(ent_count, 1)) / math.log(max(n_keys, 2)),
+        'cos_patch_tilemean': cos_pt_sum / max(n_tiles, 1),
+        'cos_cls_tilemean': cos_ct_sum / max(n_tiles, 1),
+        'cos_cls_embed': cos_ce_sum / max(n_tiles, 1),
     }
 
 
