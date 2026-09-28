@@ -92,9 +92,11 @@ length.
 
 Vanilla recipe means every value in the recipe block of `run_with_submitit.py` plus the suite's
 common settings (`scripts/run_forcing_suite.sh`): `vit_variant "S"`, `total_iterations 400_001`,
-`warmup_iterations 10_000`, `lr_schedule`, `wd_schedule` and `momentum_schedule` all `cosine`,
-`weight_decay 0.04` to `weight_decay_end 0.4`, `momentum_teacher 0.992` to `momentum_teacher_end 1.0`,
-base `lr 2e-4` scaled by sqrt(global_batch / 1024) (1.41e-4 at 512), `min_lr 1e-6`,
+`warmup_iterations 10_000`, and constant schedules at the recipe's end values, as R1 ran:
+`lr_schedule`, `wd_schedule` and `momentum_schedule` all `constant`, so the lr warms up to its
+peak and holds there, `weight_decay 0.4` throughout (`weight_decay_end` unused), and
+`momentum_teacher 0.992` throughout (`momentum_teacher_end` unused); base `lr 2e-4` scaled by
+sqrt(global_batch / 1024) (1.41e-4 at 512), `min_lr 1e-6` (unused under the constant lr schedule),
 `drop_path_rate 0.1` with `drop_path_uniform True`, `n_standard_local_crops 8` at
 `local_crop_size 96`, iBOT block masking `mask_ratio_min 0.1` to `mask_ratio_max 0.5` on
 `mask_sample_probability 0.5` of the tiles, `koleo_loss_weight 0.1`, `use_prototype_clustering False`,
@@ -106,7 +108,7 @@ variant's block count after the variant mapping; the ViT is constructed in `trai
 from `args.vitdepth`, and `layerscale_init` reaches every block's `gamma_1` and `gamma_2` in
 `models/vision_transformer/modern_vit.py`. The peak learning rate uses the global batch,
 `lr * sqrt(batch_size_per_gpu * world_size / 1024)` with `world_size` the job's GPU count, so all
-three arms print the same `[sched-config] lr: cosine peak=0.000141421 ...`. At startup the
+three arms print the same `[sched-config] lr: constant peak=0.000141421 min=0.000141421 warmup=10000`. At startup the
 trainer prints one line: `[model] variant=S depth=<n> embed=<d> heads=<h> layerscale_init=<v>`.
 
 Launch: `python run_with_submitit.py --nodes 1 --ngpus <2|4|2> --partition vanderbc_gpu`, printed
@@ -209,5 +211,5 @@ backward pass); a local CUDA GPU keeps the bf16 path.
 2. Clone this commit, verify the suite defines exactly BASE, DEPTH36, LSCALE and that
    `--depth` and the LayerScale argument (`--layerscale_init`) exist.
 3. Set up and launch the three arms with their GPU counts on `vanderbc_gpu`, no smoke arms.
-4. Verify each shows `[model]`, `[sched-config]` with peak lr 1.41e-4 and cosine kinds, and
+4. Verify each shows `[model]`, `[sched-config]` with peak lr 1.41e-4 and constant kinds, and
    `[diag]` at iteration 0 with the four new keys; report memory and iterations per second.

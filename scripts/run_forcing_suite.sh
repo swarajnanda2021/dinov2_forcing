@@ -1,7 +1,8 @@
 #!/bin/bash
 # scripts/run_forcing_suite.sh <ARM> -- set up one arm of the ViT-S forcing study, wave 2
 # (scale mimicry on the vanilla recipe): BASE (2 x 256), DEPTH36 (4 x 128, 36 blocks),
-# LSCALE (2 x 256, LayerScale init 1e-2). Global batch 512, 400_001 iterations, cosine schedules.
+# LSCALE (2 x 256, LayerScale init 1e-2). Global batch 512, 400_001 iterations, constant
+# schedules at the recipe's end values (lr held at the peak after warmup, wd 0.4, momentum 0.992), as R1.
 #
 # Mechanics follow run_sub_stab_suite_rev13.sh of the source fork: one experiment directory
 # per arm under BASE_DIR, a fresh clone of this repository into it, CLONED_COMMIT.txt from
@@ -86,7 +87,7 @@ ensure_arg save_checkpoint_freq     50_000      # periodic checkpoint_iter_*.pth
 ensure_arg rolling_checkpoint_freq  5_000       # rolling checkpoint.pth
 ensure_arg momentum_teacher         0.992
 ensure_arg momentum_teacher_end     1.0
-ensure_arg weight_decay             0.04
+ensure_arg weight_decay             0.4         # constant wd at the recipe's end value (as R1)
 ensure_arg weight_decay_end         0.4
 ensure_arg min_lr                   1e-6
 ensure_arg lr                       2e-4        # base at global batch 1024; the trainer scales by sqrt(global_batch/1024) -> 1.41e-4 at 512
@@ -103,9 +104,9 @@ ensure_arg diag_every               2000
 ensure_arg diag_probe_manifest      "\"$BASE_DIR/probe_manifest.json\""
 ensure_arg diag_probe_size          1024
 ensure_arg seed                     0
-ensure_arg lr_schedule              '"cosine"'
-ensure_arg wd_schedule              '"cosine"'
-ensure_arg momentum_schedule        '"cosine"'
+ensure_arg lr_schedule              '"constant"'   # warmup to the peak, then hold (as R1)
+ensure_arg wd_schedule              '"constant"'
+ensure_arg momentum_schedule        '"constant"'   # momentum_teacher 0.992 throughout
 
 echo "  Arm: $RUN"
 case "$RUN" in
